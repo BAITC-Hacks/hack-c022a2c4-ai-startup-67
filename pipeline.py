@@ -10,6 +10,7 @@ from analytics.features import basic_features, build_graph, network_diagnostics
 from analytics.graph_features import structural_features
 from analytics.temporal import temporal_features
 from analytics.roles import ROLE_CONFIG, classify_roles, role_diagnostics
+from analytics.clustering import cluster_network
 from utils.validation import DataValidationError, load_data
 
 
@@ -30,6 +31,7 @@ def run_pipeline(data_dir: Path, out_dir: Path) -> dict[str, object]:
     role_start = perf_counter()
     features = classify_roles(features)
     role_seconds = perf_counter() - role_start
+    features, clusters, cluster_report = cluster_network(graph, features)
     diagnostics = network_diagnostics(data, graph, features)
     diagnostics.update(metric_report)
     diagnostics.update({
@@ -44,6 +46,7 @@ def run_pipeline(data_dir: Path, out_dir: Path) -> dict[str, object]:
         "role_seconds": role_seconds,
         "roles": role_diagnostics(features),
         "role_config": ROLE_CONFIG,
+        "clustering": cluster_report,
         "n_transactions_below_5000_kzt": int(data.transactions.sum_kzt.lt(5000).sum()),
         "n_transactions_outside_july_2026": int((
             data.transactions.date.dt.year.ne(2026) | data.transactions.date.dt.month.ne(7)).sum()),
@@ -51,11 +54,12 @@ def run_pipeline(data_dir: Path, out_dir: Path) -> dict[str, object]:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     features.to_csv(out_dir / "node_features.csv", index=False, na_rep="NaN")
-    # Явные временные заглушки; кластеризация и приоритет ещё не реализованы.
-    results = features.assign(cluster_id=-1, priority_score=0.0)
+    # Только приоритет остаётся временной заглушкой до следующей задачи.
+    results = features.assign(priority_score=0.0)
     required = ["gid", "role", "role_score", "cluster_id", "priority_score", "evidence"]
     results = results[required + [column for column in results if column not in required]]
     results.to_csv(out_dir / "nodes_roles.csv", index=False, na_rep="NaN")
+    clusters.to_csv(out_dir / "clusters.csv", index=False)
     diagnostics["pipeline_seconds"] = perf_counter() - start
     (out_dir / "diagnostics.json").write_text(
         json.dumps(diagnostics, indent=2, allow_nan=False) + "\n", encoding="utf-8"
@@ -75,6 +79,7 @@ def main() -> None:
     print(json.dumps(report, indent=2, allow_nan=False))
     print(f"Features saved to {args.out / 'node_features.csv'}")
     print(f"Roles saved to {args.out / 'nodes_roles.csv'}")
+    print(f"Clusters saved to {args.out / 'clusters.csv'}")
 
 
 if __name__ == "__main__":

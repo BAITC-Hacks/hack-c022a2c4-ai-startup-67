@@ -98,7 +98,11 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(roles.columns[:6].tolist(),
                              ['gid', 'role', 'role_score', 'cluster_id', 'priority_score', 'evidence'])
             self.assertEqual(roles.gid.tolist(), output.gid.tolist())
-            self.assertTrue(roles.cluster_id.eq(-1).all())
+            self.assertTrue(roles.cluster_id.ge(0).all())
+            self.assertEqual(roles.cluster_id.tolist(), output.cluster_id.tolist())
+            clusters = pd.read_csv(root / 'out/clusters.csv')
+            self.assertEqual(clusters.n_nodes.sum(), len(output))
+            self.assertEqual(set(clusters.cluster_id), set(roles.cluster_id))
             self.assertTrue(roles.priority_score.eq(0).all())
 if __name__ == '__main__':
     unittest.main()
