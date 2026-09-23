@@ -11,6 +11,8 @@ from analytics.graph_features import structural_features
 from analytics.temporal import temporal_features
 from analytics.roles import ROLE_CONFIG, classify_roles, role_diagnostics
 from analytics.clustering import cluster_network
+from analytics.priority import PRIORITY_CONFIG, calculate_priority, build_top_nodes, priority_diagnostics
+from utils.output_validation import validate_outputs, validate_output_files
 from utils.validation import DataValidationError, load_data
 
 
@@ -32,6 +34,10 @@ def run_pipeline(data_dir: Path, out_dir: Path) -> dict[str, object]:
     features = classify_roles(features)
     role_seconds = perf_counter() - role_start
     features, clusters, cluster_report = cluster_network(graph, features)
+    priority_start = perf_counter()
+    features = calculate_priority(features)
+    top_nodes = build_top_nodes(features, PRIORITY_CONFIG['top_n'])
+    priority_seconds = perf_counter() - priority_start
     diagnostics = network_diagnostics(data, graph, features)
     diagnostics.update(metric_report)
     diagnostics.update({
@@ -47,6 +53,9 @@ def run_pipeline(data_dir: Path, out_dir: Path) -> dict[str, object]:
         "roles": role_diagnostics(features),
         "role_config": ROLE_CONFIG,
         "clustering": cluster_report,
+        "priority": priority_diagnostics(features, top_nodes),
+        "priority_config": PRIORITY_CONFIG,
+        "priority_seconds": priority_seconds,
         "n_transactions_below_5000_kzt": int(data.transactions.sum_kzt.lt(5000).sum()),
         "n_transactions_outside_july_2026": int((
             data.transactions.date.dt.year.ne(2026) | data.transactions.date.dt.month.ne(7)).sum()),
@@ -54,12 +63,14 @@ def run_pipeline(data_dir: Path, out_dir: Path) -> dict[str, object]:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     features.to_csv(out_dir / "node_features.csv", index=False, na_rep="NaN")
-    # Только приоритет остаётся временной заглушкой до следующей задачи.
-    results = features.assign(priority_score=0.0)
+    results = features.copy()
     required = ["gid", "role", "role_score", "cluster_id", "priority_score", "evidence"]
     results = results[required + [column for column in results if column not in required]]
+    validate_outputs(results, clusters, top_nodes, graph)
     results.to_csv(out_dir / "nodes_roles.csv", index=False, na_rep="NaN")
     clusters.to_csv(out_dir / "clusters.csv", index=False)
+    top_nodes.to_csv(out_dir / "top_nodes.csv", index=False)
+    diagnostics["output_validation"] = validate_output_files(out_dir, graph)
     diagnostics["pipeline_seconds"] = perf_counter() - start
     (out_dir / "diagnostics.json").write_text(
         json.dumps(diagnostics, indent=2, allow_nan=False) + "\n", encoding="utf-8"
@@ -80,6 +91,9 @@ def main() -> None:
     print(f"Features saved to {args.out / 'node_features.csv'}")
     print(f"Roles saved to {args.out / 'nodes_roles.csv'}")
     print(f"Clusters saved to {args.out / 'clusters.csv'}")
+    print(f"Top nodes saved to {args.out / 'top_nodes.csv'}")
+    print(f"Pipeline completed successfully. Nodes: {report['n_nodes']}; "
+          f"clusters: {report['clustering']['n_clusters']}; top nodes: {report['priority']['n_top_exported']}.")
 
 
 if __name__ == "__main__":
