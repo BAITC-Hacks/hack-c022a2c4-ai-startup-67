@@ -4,3 +4,7 @@ __pycache__/
 data/*.parquet
 out/
 .DS_Store
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
