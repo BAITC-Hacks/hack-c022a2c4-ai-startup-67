@@ -1,5 +1,6 @@
 """Bounded Responses API function-calling loop; no provider errors leak to UI."""
 import json
+import logging
 from assistant.tools import TOOL_SCHEMAS
 
 SYSTEM_PROMPT = '''You are an AML graph analysis assistant explaining deterministic pipeline outputs.
@@ -8,7 +9,7 @@ Never invent GIDs, transactions, amounts, relationships, identity, demographics,
 Do not calculate or change roles or priority scores. Never call a client guilty, criminal, a money launderer or confirmed organizer.
 Use observed pattern, consolidation indicators, observed transit behavior, structurally important node, candidate for review.
 Distinguish counts from amounts. Seed reachability is not proof of coordination. Zero visible outflow at depth 4 is not a confirmed terminal state.
-Incoming seed activity may be incomplete. Only July 2026, outgoing seed traversal, four hops and transfers >=5000 KZT are observed.
+Incoming seed activity may be incomplete. Only July 2026, within-bank transfers, outgoing seed traversal, four hops and transfers >=5000 KZT are observed.
 Counterparty results may be truncated: always distinguish shown from total. No exact intra-day ordering is available.
 If data is missing, say so. Cite precise tool names and actual metrics where useful. No unsupported numeric claims.
 Reply concisely in the user's language, in four sections: Finding, Evidence, Limitation, Next check.
@@ -39,6 +40,8 @@ def answer_question(question, gid, tools, api_key=None, model='gpt-4.1-mini', cl
             response = client.responses.create(model=model, instructions=SYSTEM_PROMPT, input=history,
                                                tools=TOOL_SCHEMAS, tool_choice='none' if step == 2 else 'auto',
                                                max_output_tokens=1800, store=False)
+            if getattr(response, 'status', 'completed') != 'completed':
+                return {'error': 'AI не завершил ответ. Попробуйте более короткий вопрос.', 'evidence': evidence}
             calls = [item for item in response.output if item.type == 'function_call']
             if not calls:
                 text = response.output_text.strip()
@@ -62,5 +65,8 @@ def answer_question(question, gid, tools, api_key=None, model='gpt-4.1-mini', cl
         return {'error': 'AI временно недоступен. Проверьте ключ, модель и соединение. Основная аналитика доступна.', 'evidence': evidence}
     finally:
         if owned_client and client is not None:
-            client.close()
+            try:
+                client.close()
+            except Exception as exc:
+                logging.getLogger(__name__).warning('AI client cleanup failed: %s', type(exc).__name__)
     return {'error': 'Не удалось завершить AI-разбор.', 'evidence': evidence}

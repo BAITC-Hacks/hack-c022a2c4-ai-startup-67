@@ -207,6 +207,33 @@ class DashboardTests(unittest.TestCase):
             app.text_input(key='search_gid').set_value('3').run()
         self.assertFalse(app.exception)
 
+    def test_changed_parquet_with_same_gids_is_not_mixed_with_old_scores(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('nodes', 'edges', 'transactions'):
+                frame = pd.read_parquet(self.data_dir / f'{name}.parquet')
+                if name != 'nodes':
+                    frame['sum_kzt'] *= 2
+                frame.to_parquet(root / f'{name}.parquet', index=False)
+            with patch.dict(os.environ, {'MONEY_GRAPH_DATA_DIR': directory}):
+                app = self.app()
+            self.assertFalse(app.exception)
+            self.assertTrue(any('Исходный граф недоступен' in x.value for x in app.warning))
+            self.assertTrue(any('Дневные транзакции недоступны' in x.value for x in app.warning))
+            tools = app.session_state['analysis_tools']
+            self.assertIsNone(tools.edges)
+            self.assertIsNone(tools.transactions)
+
+    def test_missing_optional_priority_config_is_safe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('nodes_roles.csv', 'clusters.csv', 'top_nodes.csv'):
+                (root / name).write_bytes((self.out / name).read_bytes())
+            (root / 'diagnostics.json').write_text('{"priority_config": null}')
+            with patch.dict(os.environ, {'MONEY_GRAPH_OUT_DIR': directory}):
+                app = self.app()
+            self.assertFalse(app.exception)
+
 
 if __name__ == '__main__':
     unittest.main()

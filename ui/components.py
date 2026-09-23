@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from ui.formatting import ROLE_COLORS, ROLE_LABELS, kzt, numeric
+from ui.formatting import ROLE_COLORS
 from visualization.graph_view import bounded_view, render_graph_html as cached_graph_html
 
 
@@ -73,14 +73,3 @@ def table(frame, **kwargs):
         'sum_kzt': st.column_config.NumberColumn('Сумма, KZT', format='localized'),
         'sum_kzt_internal': st.column_config.NumberColumn('Внутренний оборот, KZT', format='localized'),
     }, **kwargs)
-
-
-def summary_metrics(row):
-    for columns, fields in ((st.columns(4), [('Роль', row['role']), ('Сила роли', numeric(row['role_score'], 3)),
-                                            ('Приоритет', numeric(row['priority_score'], 3)), ('Кластер', str(row['cluster_id']))]),
-                            (st.columns(3), [('Глубина', numeric(row.get('depth'))),
-                                            ('Seed', 'Да' if row.get('is_seed') is True or row.get('is_seed') == True else 'Нет' if 'is_seed' in row else '—'),
-                                            ('Усечение глубиной', 'Да' if row.get('truncated_by_depth') == True else 'Нет' if 'truncated_by_depth' in row else '—')])):
-        for column, (label, value) in zip(columns, fields):
-            column.metric(label, value)
-    st.caption('Ролевой паттерн: ' + ROLE_LABELS.get(row['role'], row['role']))

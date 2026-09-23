@@ -10,7 +10,7 @@ from analytics.priority import PRIORITY_CONFIG
 from ui.data import (fingerprint, missing_outputs, load_outputs,
                      load_edges, load_graph, load_transactions, find_node,
                      node_warnings, counterparties, daily_activity)
-from ui.data import download_bytes
+from ui.data import download_bytes, verify_sources
 from ui.formatting import ROLE_LABELS, LIMITATIONS, kzt, numeric
 from ui.components import graph_panel, role_chart, role_legend, priority_breakdown, table
 from visualization.graph_view import neighborhood
@@ -246,6 +246,7 @@ def main():
     try:
         if all((Path(data_dir) / name).is_file() for name in ('nodes.parquet', 'edges.parquet')):
             signature = fingerprint(data_dir, ('nodes.parquet', 'edges.parquet'))
+            verify_sources(data_dir, signature, diagnostics.get('source_fingerprints'), ('nodes.parquet', 'edges.parquet'))
             graph = load_graph(data_dir, signature)
             _, edges = load_edges(data_dir, signature)
             if set(graph) != set(nodes.gid):
@@ -255,15 +256,18 @@ def main():
             st.warning('Исходные parquet графа не найдены. Таблицы доступны; укажите папку данных для направленных графов.')
     except Exception as exc:
         graph = edges = None
-        st.warning(f'Исходный граф недоступен ({type(exc).__name__}). Проверьте parquet-файлы.')
+        st.warning(f'Исходный граф недоступен ({type(exc).__name__}). Проверьте parquet и повторите pipeline для выбранных данных.')
     if (Path(data_dir) / 'transactions.parquet').is_file():
         try:
+            verify_sources(data_dir, fingerprint(data_dir, ('transactions.parquet',)),
+                           diagnostics.get('source_fingerprints'), ('transactions.parquet',))
             transactions = load_transactions(data_dir, fingerprint(data_dir, ('transactions.parquet',)))
             if not transactions.src.isin(nodes.gid).all() or not transactions.dst.isin(nodes.gid).all():
                 transactions = None
                 st.warning('Транзакции относятся к другому набору gid; дневной график отключён.')
         except Exception as exc:
-            st.warning(f'Дневные транзакции недоступны ({type(exc).__name__}).')
+            transactions = None
+            st.warning(f'Дневные транзакции недоступны ({type(exc).__name__}). Проверьте parquet и повторите pipeline.')
     if 'selected_gid' not in st.session_state:
         choose_gid(top.gid.iloc[0] if len(top) else nodes.gid.iloc[0])
     with st.sidebar:
@@ -273,7 +277,10 @@ def main():
     selected = st.session_state.get('selected_gid', '')
     if selected and find_node(nodes, selected) is None:
         st.warning('Указанный GID не найден в экспорте.')
-    weights = diagnostics.get('priority_config', PRIORITY_CONFIG).get('weights', {})
+    saved_config = diagnostics.get('priority_config')
+    weights = saved_config.get('weights') if isinstance(saved_config, dict) else None
+    if not isinstance(weights, dict) or set(weights) != set(PRIORITY_CONFIG['weights']):
+        weights = PRIORITY_CONFIG['weights']
     from assistant.tools import AnalysisTools
     st.session_state['analysis_tools'] = AnalysisTools(nodes, clusters, top, edges, transactions)
     st.session_state['data_version'] = (fingerprint(out_dir, ('nodes_roles.csv', 'clusters.csv', 'top_nodes.csv')),

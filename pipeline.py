@@ -14,10 +14,12 @@ from analytics.clustering import cluster_network
 from analytics.priority import PRIORITY_CONFIG, calculate_priority, build_top_nodes, priority_diagnostics
 from utils.output_validation import validate_outputs, validate_output_files
 from utils.validation import DataValidationError, load_data
+from utils.provenance import source_fingerprints
 
 
 def run_pipeline(data_dir: Path, out_dir: Path) -> dict[str, object]:
     start = perf_counter()
+    source_hashes = source_fingerprints(data_dir)
     data = load_data(data_dir)
     graph = build_graph(data)
     features = basic_features(graph)
@@ -61,6 +63,9 @@ def run_pipeline(data_dir: Path, out_dir: Path) -> dict[str, object]:
             data.transactions.date.dt.year.ne(2026) | data.transactions.date.dt.month.ne(7)).sum()),
     })
     out_dir = Path(out_dir)
+    if source_hashes != source_fingerprints(data_dir):
+        raise ValueError('Source parquet files changed during analysis; run pipeline again')
+    diagnostics['source_fingerprints'] = source_hashes
     out_dir.mkdir(parents=True, exist_ok=True)
     features.to_csv(out_dir / "node_features.csv", index=False, na_rep="NaN")
     results = features.copy()

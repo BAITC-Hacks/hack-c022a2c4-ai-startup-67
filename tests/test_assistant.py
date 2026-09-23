@@ -106,6 +106,40 @@ class AssistantTests(unittest.TestCase):
             self.assertIn('error', answer_question(question, gid, self.tools, client=client))
         client.responses.create.assert_not_called()
 
+    def test_auth_timeout_and_server_errors_are_safe(self):
+        import httpx
+        from openai import AuthenticationError, APITimeoutError, InternalServerError
+        request = httpx.Request('POST', 'https://api.openai.com/v1/responses')
+        failures = [AuthenticationError('secret-must-not-leak', response=httpx.Response(401, request=request), body=None),
+                    APITimeoutError(request=request),
+                    InternalServerError('secret-must-not-leak', response=httpx.Response(500, request=request), body=None)]
+        for failure in failures:
+            with self.subTest(kind=type(failure).__name__):
+                client = Mock()
+                client.responses.create.side_effect = failure
+                result = answer_question('Why?', '2', self.tools, client=client)
+                self.assertIn('error', result)
+                self.assertNotIn('secret-must-not-leak', json.dumps(result))
+
+    def test_malformed_and_incomplete_responses_are_not_presented_as_answers(self):
+        for response in [None, NS(output=None), NS(output=[], output_text=None),
+                         NS(status='incomplete', output=[], output_text='Partial finding'),
+                         NS(output=[], output_text='')]:
+            with self.subTest(response=response):
+                client = Mock()
+                client.responses.create.return_value = response
+                self.assertIn('error', answer_question('Why?', '2', self.tools, client=client))
+
+    def test_client_cleanup_failure_does_not_crash_app(self):
+        with patch('openai.OpenAI') as factory:
+            client = factory.return_value
+            client.responses.create.side_effect = RuntimeError('provider error')
+            client.close.side_effect = RuntimeError('secret-must-not-leak')
+            with self.assertLogs('assistant.service', level='WARNING') as logs:
+                result = answer_question('Why?', '2', self.tools, api_key='test-placeholder')
+            self.assertIn('error', result)
+            self.assertNotIn('secret-must-not-leak', ''.join(logs.output))
+
     def test_ui_no_key_and_explicit_submit_only(self):
         env = {'MONEY_GRAPH_DATA_DIR': str(dashboard_fixture.DashboardTests.data_dir), 'MONEY_GRAPH_OUT_DIR': str(dashboard_fixture.DashboardTests.out)}
         with patch.dict(os.environ, env), patch('ui.assistant.setting', return_value=''):

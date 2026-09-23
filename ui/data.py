@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from ui.formatting import ROLE_COLORS
+from utils.provenance import source_fingerprints
 
 REQUIRED_OUTPUTS = ('nodes_roles.csv', 'clusters.csv', 'top_nodes.csv')
 
@@ -24,6 +25,16 @@ def fingerprint(directory, filenames):
 
 def missing_outputs(directory):
     return [name for name in REQUIRED_OUTPUTS if not (Path(directory) / name).is_file()]
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def verify_sources(directory, signature, expected, names):
+    """Проверяется только при новой версии файлов; CSV-аналитика не пересчитывается."""
+    if not expected:
+        return  # Совместимость со старыми экспортами без provenance.
+    actual = source_fingerprints(directory, names)
+    if any(actual[name] != expected.get(name) for name in names):
+        raise DashboardDataError('Parquet изменились после расчёта CSV. Повторите pipeline.')
 
 
 def _booleans(frame):
