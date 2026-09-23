@@ -1,20 +1,50 @@
-"""CLI for validated loading and base graph features only."""
+"""CLI for validated loading and explainable graph and daily features."""
 import argparse
 import json
 from pathlib import Path
+from time import perf_counter
+
+import numpy as np
 
 from analytics.features import basic_features, build_graph, network_diagnostics
+from analytics.graph_features import structural_features
+from analytics.temporal import temporal_features
 from utils.validation import DataValidationError, load_data
 
 
 def run_pipeline(data_dir: Path, out_dir: Path) -> dict[str, object]:
+    start = perf_counter()
     data = load_data(data_dir)
     graph = build_graph(data)
     features = basic_features(graph)
+    features, metric_report = structural_features(graph, features)
+    temporal_start = perf_counter()
+    features = features.merge(temporal_features(data.transactions, data.nodes),
+                              on="gid", how="left", validate="one_to_one")
+    temporal_seconds = perf_counter() - temporal_start
+    if len(features) != len(data.nodes) or features.gid.duplicated().any():
+        raise ValueError("Feature output must contain exactly one row per gid")
+    if np.isinf(features.select_dtypes(include="number").to_numpy(dtype=float)).any():
+        raise ValueError("Feature output contains infinity")
     diagnostics = network_diagnostics(data, graph, features)
+    diagnostics.update(metric_report)
+    diagnostics.update({
+        "feature_shape": list(features.shape),
+        "n_positive_betweenness": int(features.betweenness.gt(0).sum()),
+        "n_reachable_from_multiple_seeds": int(features.reachable_seed_count.gt(1).sum()),
+        "n_3plus_in_counterparties": int(features.in_deg.ge(3).sum()),
+        "n_10plus_out_counterparties": int(features.out_deg.ge(10).sum()),
+        "n_short_window_ratio_available": int(features.short_window_outflow_ratio.notna().sum()),
+        "n_in_short_cycle": int(features.is_in_short_cycle.sum()),
+        "temporal_seconds": temporal_seconds,
+        "n_transactions_below_5000_kzt": int(data.transactions.sum_kzt.lt(5000).sum()),
+        "n_transactions_outside_july_2026": int((
+            data.transactions.date.dt.year.ne(2026) | data.transactions.date.dt.month.ne(7)).sum()),
+    })
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     features.to_csv(out_dir / "node_features.csv", index=False, na_rep="NaN")
+    diagnostics["pipeline_seconds"] = perf_counter() - start
     (out_dir / "diagnostics.json").write_text(
         json.dumps(diagnostics, indent=2, allow_nan=False) + "\n", encoding="utf-8"
     )
